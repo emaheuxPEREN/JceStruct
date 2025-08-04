@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "JceStruct"
-version = "0.1.5"
+version = "0.2.0"
 description = "JCE Encode/Decode"
 authors = ["yanyongyu <yanyongyu_1@126.com>"]
 license = "MIT"
@@ -14,19 +14,34 @@ packages = [
 ]
 include = ["jce/py.typed"]
 
+[tool.poetry.scripts]
+jce_decode = "jce.__main__:cli"
+
 [tool.poetry.dependencies]
-python = "^3.7"
-pydantic = "^1.8.1"
-typing-extensions = ">=3.7.4,<5.0.0"
+python = "^3.9"
+pydantic = "^2"
+typing-extensions = "^4"
 
 [tool.poetry.dev-dependencies]
-isort = "^5.9.3"
-black = "^21.7b0"
+black = "^25"
+isort = "^6"
 
 # [[tool.poetry.source]]
 # name = "aliyun"
 # url = "https://mirrors.aliyun.com/pypi/simple/"
 # default = true
+
+[tool.mypy]
+strict = true
+pretty = true
+
+[tool.pyright]
+typeCheckingMode = "strict"
+reportUnnecessaryIsInstance = false
+reportUnnecessaryComparison = false
+reportUnknownVariableType = false
+reportUnknownMemberType = false
+reportUnknownArgumentType = false
 
 [tool.black]
 line-length = 80

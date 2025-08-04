@@ -145,15 +145,10 @@ By default, head bytes are treated like this:
 
 field will be converted to the type defined in struct when validate.
 
-to change it:
+to change it pass the `default_types` argument (partial map of custom types), for example:
 
 ```python
-class ExampleStruct(JceStruct):
-
-    class Config:
-        jce_default_type = {
-            # add all types here
-        }
+JceDecoder.decode_bytes(data, default_types={0: INT8, 12: ZERO_TAG_INT8})
 ```
 
 ## Command Line Usage
