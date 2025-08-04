@@ -214,6 +214,7 @@ class JceDecoder:
             jce_id, data, data_length = cls.decode_single(
                 jce_byte[offset:], default_types=default_types, **extra
             )
+            assert data_length > 0, offset
             result[jce_id] = data
             offset += data_length
         return result
@@ -843,6 +844,7 @@ class JceStruct(JceType, BaseModel, metaclass=JceMetaclass):
             jce_id, decoded, data_length = cls.__jce_decoder__.decode_single(
                 data[offset:], default_types=default_types
             )
+            assert data_length > 0, offset
             offset += data_length
             if decoded is None:
                 struct_end = True
