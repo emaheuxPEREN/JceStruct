@@ -39,6 +39,10 @@ class _empty(metaclass=_empty_meta):
     pass
 
 
+class JceFieldId(int):
+    """Int wrapper to be able to discriminate between a decoded Struct vs. Map<int, T>"""
+
+
 def JceField(
     default: Any = Undefined,
     *,
@@ -176,14 +180,14 @@ TDefaultTypes = Dict[int, Type["JceType"]]
 
 class JceDecoder:
     @staticmethod
-    def decode_head(jce_byte: bytes) -> Tuple[int, int, int]:
+    def decode_head(jce_byte: bytes) -> Tuple[JceFieldId, int, int]:
         type_byte: int = struct.unpack_from(">B", jce_byte)[0]
         type_ = type_byte & 0xF
         jce_id = type_byte >> 4
         if jce_id == 0xF:
             jce_id = struct.unpack_from(">B", jce_byte, 1)[0]
-            return jce_id, type_, 2
-        return jce_id, type_, 1
+            return JceFieldId(jce_id), type_, 2
+        return JceFieldId(jce_id), type_, 1
 
     @classmethod
     def decode_single(
@@ -191,7 +195,7 @@ class JceDecoder:
         jce_byte: bytes,
         default_types: Optional[TDefaultTypes] = None,
         **extra: Any,
-    ) -> Tuple[int, "JceType", int]:
+    ) -> Tuple[JceFieldId, "JceType", int]:
         jce_id, type_id, head_length = cls.decode_head(jce_byte)
         jce_type = get_jce_type(type_id, default_types)
         if not jce_type:
@@ -207,9 +211,9 @@ class JceDecoder:
         jce_byte: bytes,
         default_types: Optional[TDefaultTypes] = None,
         **extra: Any,
-    ) -> Dict[int, "JceType"]:
+    ) -> Dict[JceFieldId, "JceType"]:
         offset = 0
-        result: Dict[int, "JceType"] = {}
+        result: Dict[JceFieldId, "JceType"] = {}
         while offset < len(jce_byte):
             jce_id, data, data_length = cls.decode_single(
                 jce_byte[offset:], default_types=default_types, **extra
@@ -237,12 +241,12 @@ class JceDecoder:
         cls,
         jce_struct: Type[S],
         fields: Dict[str, "JceModelField"],
-        jce_dict: Dict[int, "JceType"],
+        jce_dict: Dict[JceFieldId, "JceType"],
         **extra: "JceType",
     ) -> S:
         result: dict[str, "JceType"] = {}
         for name, field in fields.items():
-            data = jce_dict.get(field.jce_id, _empty())
+            data = jce_dict.get(JceFieldId(field.jce_id), _empty())
             if isinstance(data, _empty):
                 continue
             result[name] = data
@@ -283,7 +287,9 @@ class JceType(abc.ABC):
 
     @classmethod
     def validate(cls: Type[T], v: Any) -> T:
-        return v  # type: ignore[no-any-return]
+        if isinstance(v, cls):
+            return v
+        return cls(v)  # type: ignore[call-arg]
 
 
 class BYTE(JceType, bytes):
@@ -334,7 +340,7 @@ class BOOL(JceType, int):
             if len(v) != 1:
                 raise ValueError(f"Invalid byte length: {len(v)}")
             v, _ = cls.from_bytes(v)
-        elif not isinstance(v, int):
+        elif not isinstance(v, (int, bool)):
             raise TypeError(f"Invalid value type: {type(v)}")
         return cls(v)
 
@@ -654,8 +660,13 @@ class STRUCT_START(JceType):
         *,
         default_types: Optional[TDefaultTypes] = None,
         **extra: Any,
-    ) -> Tuple[Dict[int, Any], int]:
+    ) -> Tuple[Dict[JceFieldId, Any], int]:
         return JceStruct.from_bytes(data, default_types=default_types, **extra)
+
+    @classmethod
+    def validate(cls, v: Any) -> dict[JceFieldId, Any]:
+        assert isinstance(v, dict)
+        return v  # pass-through validation of recovered JceStruct
 
 
 class STRUCT_END(JceType):
@@ -669,6 +680,11 @@ class STRUCT_END(JceType):
     def from_bytes(cls, data: bytes, **extra: Any) -> Tuple[None, int]:
         return None, 0
 
+    @classmethod
+    def validate(cls, v: Any) -> None:
+        assert v is None, v
+        return None
+
 
 class ZERO_TAG(JceType, bytes):
     __jce_type__ = (12,)
@@ -679,7 +695,7 @@ class ZERO_TAG(JceType, bytes):
 
     @classmethod
     def from_bytes(cls, data: bytes, **extra: Any) -> Tuple[bytes, int]:
-        return bytes([0]), 0
+        return b"\x00", 0
 
 
 class ZERO_TAG_INT8(JceType, int):  # useful for decoding
@@ -724,10 +740,6 @@ class BYTES(JceType, bytes):
             data[data_length : data_length + byte_length],
             data_length + byte_length,
         )
-
-    @classmethod
-    def validate(cls, v: Any) -> Self:
-        return cls(v)
 
 
 class JceMetaclass(ModelMetaclass):
@@ -820,12 +832,12 @@ class JceStruct(JceType, BaseModel, metaclass=JceMetaclass):
         decoded = cls.__jce_decoder__.decode_bytes(
             data, default_types=default_types
         )
-        result_list = decoded.get(jce_id)
+        result_list = decoded.get(JceFieldId(jce_id))
         if not isinstance(result_list, list):
             raise TypeError(f"Value at jce_id {jce_id} is not a list")
-        for index in range(len(result_list)):
+        for index, val in enumerate(result_list):
             result_list[index] = cls.__jce_decoder__.from_jce_dict(
-                cls, cls.__jce_fields__, result_list[index], **extra
+                cls, cls.__jce_fields__, val, **extra
             )
         return result_list
 
@@ -836,9 +848,9 @@ class JceStruct(JceType, BaseModel, metaclass=JceMetaclass):
         *,
         default_types: Optional[TDefaultTypes] = None,
         **extra: JceType,
-    ) -> Tuple[Dict[int, JceType], int]:
+    ) -> Tuple[Dict[JceFieldId, JceType], int]:
         offset = 0
-        result: dict[int, JceType] = {}
+        result: dict[JceFieldId, JceType] = {}
         struct_end = False
         while not struct_end and offset < len(data):
             jce_id, decoded, data_length = cls.__jce_decoder__.decode_single(
@@ -850,10 +862,11 @@ class JceStruct(JceType, BaseModel, metaclass=JceMetaclass):
                 struct_end = True
                 break
             result[jce_id] = decoded
-        result.update(extra)  # type: ignore[arg-type]
 
         if not struct_end:
             raise ValueError(f"Struct end not found")
+
+        result.update(extra)  # type: ignore[arg-type]
         return result, offset
 
     @classmethod
@@ -867,7 +880,7 @@ class JceStruct(JceType, BaseModel, metaclass=JceMetaclass):
         for field_name in cls.__fields__.keys():
             if field_name in cls.__jce_fields__:
                 jce_info = cls.__jce_fields__[field_name]
-                data = v.get(jce_info.jce_id, _empty)
+                data = v.get(JceFieldId(jce_info.jce_id), _empty)
                 if data is _empty:
                     data = v.get(field_name, _empty)
                 if data is _empty:
